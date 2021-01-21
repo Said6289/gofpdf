@@ -128,7 +128,7 @@ type Template interface {
 
 func (f *Fpdf) templateFontCatalog() {
 	var keyList []string
-	var font fontDefType
+	var font FontDefType
 	var key string
 	f.out("/Font <<")
 	for key = range f.fonts {

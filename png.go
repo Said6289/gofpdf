@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-func (f *Fpdf) pngColorSpace(ct byte) (colspace string, colorVal int) {
+func pngColorSpace(ct byte) (colspace string, colorVal int, err error) {
 	colorVal = 1
 	switch ct {
 	case 0, 4:
@@ -33,47 +33,47 @@ func (f *Fpdf) pngColorSpace(ct byte) (colspace string, colorVal int) {
 	case 3:
 		colspace = "Indexed"
 	default:
-		f.err = fmt.Errorf("unknown color type in PNG buffer: %d", ct)
+		err = fmt.Errorf("unknown color type in PNG buffer: %d", ct)
 	}
 	return
 }
 
-func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoType) {
-	info = f.newImageInfo()
+func parsepngstream(buf *bytes.Buffer, readdpi bool, pdfVersion *string) (info *ImageInfoType, err error) {
+	info = newImageInfo()
 	// 	Check signature
 	if string(buf.Next(8)) != "\x89PNG\x0d\x0a\x1a\x0a" {
-		f.err = fmt.Errorf("not a PNG buffer")
+		err = fmt.Errorf("not a PNG buffer")
 		return
 	}
 	// Read header chunk
 	_ = buf.Next(4)
 	if string(buf.Next(4)) != "IHDR" {
-		f.err = fmt.Errorf("incorrect PNG buffer")
+		err = fmt.Errorf("incorrect PNG buffer")
 		return
 	}
-	w := f.readBeInt32(buf)
-	h := f.readBeInt32(buf)
-	bpc := f.readByte(buf)
+	w := readBeInt32(buf)
+	h := readBeInt32(buf)
+	bpc := readByte(buf)
 	if bpc > 8 {
-		f.err = fmt.Errorf("16-bit depth not supported in PNG file")
+		err = fmt.Errorf("16-bit depth not supported in PNG file")
 	}
-	ct := f.readByte(buf)
+	ct := readByte(buf)
 	var colspace string
 	var colorVal int
-	colspace, colorVal = f.pngColorSpace(ct)
-	if f.err != nil {
+	colspace, colorVal, err = pngColorSpace(ct)
+	if err != nil {
 		return
 	}
-	if f.readByte(buf) != 0 {
-		f.err = fmt.Errorf("'unknown compression method in PNG buffer")
+	if readByte(buf) != 0 {
+		err = fmt.Errorf("'unknown compression method in PNG buffer")
 		return
 	}
-	if f.readByte(buf) != 0 {
-		f.err = fmt.Errorf("'unknown filter method in PNG buffer")
+	if readByte(buf) != 0 {
+		err = fmt.Errorf("'unknown filter method in PNG buffer")
 		return
 	}
-	if f.readByte(buf) != 0 {
-		f.err = fmt.Errorf("interlacing not supported in PNG buffer")
+	if readByte(buf) != 0 {
+		err = fmt.Errorf("interlacing not supported in PNG buffer")
 		return
 	}
 	_ = buf.Next(4)
@@ -84,7 +84,7 @@ func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoT
 	data := make([]byte, 0, 32)
 	loop := true
 	for loop {
-		n := int(f.readBeInt32(buf))
+		n := int(readBeInt32(buf))
 		// dbg("Loop [%d]", n)
 		switch string(buf.Next(4)) {
 		case "PLTE":
@@ -122,8 +122,8 @@ func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoT
 			// but we ignore files like this
 			// but if they're the same then we can stamp our info
 			// object with it
-			x := int(f.readBeInt32(buf))
-			y := int(f.readBeInt32(buf))
+			x := int(readBeInt32(buf))
+			y := int(readBeInt32(buf))
 			units := buf.Next(1)[0]
 			// fmt.Printf("got a pHYs block, x=%d, y=%d, u=%d, readdpi=%t\n",
 			// x, y, int(units), readdpi)
@@ -147,7 +147,7 @@ func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoT
 		}
 	}
 	if colspace == "Indexed" && len(pal) == 0 {
-		f.err = fmt.Errorf("missing palette in PNG buffer")
+		err = fmt.Errorf("missing palette in PNG buffer")
 	}
 	info.w = float64(w)
 	info.h = float64(h)
@@ -160,10 +160,8 @@ func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoT
 	// dbg("ct [%d]", ct)
 	if ct >= 4 {
 		// Separate alpha and color channels
-		var err error
 		data, err = sliceUncompress(data)
 		if err != nil {
-			f.err = err
 			return
 		}
 		var color, alpha bytes.Buffer
@@ -204,8 +202,8 @@ func (f *Fpdf) parsepngstream(buf *bytes.Buffer, readdpi bool) (info *ImageInfoT
 		}
 		data = sliceCompress(color.Bytes())
 		info.smask = sliceCompress(alpha.Bytes())
-		if f.pdfVersion < "1.4" {
-			f.pdfVersion = "1.4"
+		if *pdfVersion < "1.4" {
+			*pdfVersion = "1.4"
 		}
 	}
 	info.data = data

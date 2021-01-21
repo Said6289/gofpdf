@@ -81,7 +81,7 @@ func fpdfNew(orientationStr, unitStr, sizeStr, fontDirStr string, size SizeType)
 	f.pageBoxes = make(map[int]map[string]PageBox)
 	f.defPageBoxes = make(map[string]PageBox)
 	f.state = 0
-	f.fonts = make(map[string]fontDefType)
+	f.fonts = make(map[string]FontDefType)
 	f.fontFiles = make(map[string]fontFileType)
 	f.diffs = make([]string, 0, 8)
 	f.templates = make(map[string]Template)
@@ -1723,7 +1723,7 @@ func (f *Fpdf) addFont(familyStr, styleStr, fileStr string, isUTF8 bool) {
 		} else {
 			sbarr = makeSubsetRange(32)
 		}
-		def := fontDefType{
+		def := FontDefType{
 			Tp:        Type,
 			Name:      fontKey,
 			Desc:      desc,
@@ -1860,7 +1860,7 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 		} else {
 			sbarr = makeSubsetRange(32)
 		}
-		def := fontDefType{
+		def := FontDefType{
 			Tp:        Type,
 			Name:      fontkey,
 			Desc:      desc,
@@ -1874,7 +1874,7 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 		f.fonts[fontkey] = def
 	} else {
 		// load font definitions
-		var info fontDefType
+		var info FontDefType
 		err := json.Unmarshal(jsonFileBytes, &info)
 
 		if err != nil {
@@ -1931,6 +1931,81 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 	}
 }
 
+func PrepareFontDescType(utf8Bytes []byte, familyStr, styleStr, aliasNbPagesStr string) (FontDefType, error) {
+    Type := "UTF8"
+    reader := fileReader{readerPosition: 0, array: utf8Bytes}
+
+    utf8File := newUTF8Font(&reader)
+    def := FontDefType{}
+
+    err := utf8File.parseFile()
+    if err != nil {
+        fmt.Printf("get metrics Error: %e\n", err)
+        return def, err
+    }
+    desc := FontDescType{
+        Ascent:       int(utf8File.Ascent),
+        Descent:      int(utf8File.Descent),
+        CapHeight:    utf8File.CapHeight,
+        Flags:        utf8File.Flags,
+        FontBBox:     utf8File.Bbox,
+        ItalicAngle:  utf8File.ItalicAngle,
+        StemV:        utf8File.StemV,
+        MissingWidth: round(utf8File.DefaultWidth),
+    }
+
+    var sbarr map[int]int
+    if aliasNbPagesStr == "" {
+        sbarr = makeSubsetRange(57)
+    } else {
+        sbarr = makeSubsetRange(32)
+    }
+
+    fontkey := getFontKey(familyStr, styleStr);
+    def = FontDefType{
+        Tp:        Type,
+        Name:      fontkey,
+        Desc:      desc,
+        Up:        int(round(utf8File.UnderlinePosition)),
+        Ut:        round(utf8File.UnderlineThickness),
+        Cw:        utf8File.CharWidths,
+        utf8File:  utf8File,
+        usedRunes: sbarr,
+    }
+    def.i, _ = generateFontID(def)
+
+    if err == nil {
+        GenerateCIDFontMap(&def)
+
+        usedRunes := def.usedRunes
+        for i := 0; i < def.utf8File.LastRune; i += 1 {
+            usedRunes[int(i)] = int(i)
+        }
+        delete(usedRunes, 0)
+        def.utf8FontStream = def.utf8File.GenerateCutFont(usedRunes)
+        def.compressedFontStream = sliceCompress(def.utf8FontStream)
+
+        CodeSignDictionary := def.utf8File.CodeSymbolDictionary
+        delete(CodeSignDictionary, 0)
+
+        cidToGidMap := make([]byte, 256*256*2)
+
+        for cc, glyph := range CodeSignDictionary {
+            cidToGidMap[cc*2] = byte(glyph >> 8)
+            cidToGidMap[cc*2+1] = byte(glyph & 0xFF)
+        }
+
+        def.cidToGidMap = sliceCompress(cidToGidMap)
+    }
+
+    return def, err;
+}
+
+func (f *Fpdf) RegisterFontDef(def FontDefType, familyStr, styleStr string) {
+    fontkey := getFontKey(familyStr, styleStr)
+    f.fonts[fontkey] = def
+}
+
 // getFontKey is used by AddFontFromReader and GetFontDesc
 func getFontKey(familyStr, styleStr string) string {
 	familyStr = strings.ToLower(familyStr)
@@ -1956,7 +2031,7 @@ func (f *Fpdf) AddFontFromReader(familyStr, styleStr string, r io.Reader) {
 	if ok {
 		return
 	}
-	var info fontDefType
+	var info FontDefType
 	info = f.loadfont(r)
 	if f.err != nil {
 		return
@@ -3193,12 +3268,31 @@ func (f *Fpdf) RegisterImageOptionsReader(imgName string, options ImageOptions, 
 		return
 	}
 
-	if info.i, f.err = generateImageID(info); f.err != nil {
+	if info.i, f.err = generateImageID(info, f.k); f.err != nil {
 		return
 	}
 	f.images[imgName] = info
 
 	return
+}
+
+func PreparePNG(buf *bytes.Buffer, scale float64, readDpi bool) (*ImageInfoType, error) {
+    dummy := ""
+    info, err := parsepngstream(buf, readDpi, &dummy)
+    if err == nil {
+        info.i, err = generateImageID(info, scale)
+        info.compressedPal = sliceCompress(info.pal)
+    }
+    return info, err
+}
+
+func (f *Fpdf) RegisterImageInfo(imgName string, info *ImageInfoType) {
+    if f.err == nil {
+        _, ok := f.images[imgName]
+        if !ok {
+            f.images[imgName] = info
+        }
+    }
 }
 
 // RegisterImage registers an image, adding it to the PDF file but not adding
@@ -3556,7 +3650,7 @@ func (f *Fpdf) endpage() {
 }
 
 // Load a font definition file from the given Reader
-func (f *Fpdf) loadfont(r io.Reader) (def fontDefType) {
+func (f *Fpdf) loadfont(r io.Reader) (def FontDefType) {
 	if f.err != nil {
 		return
 	}
@@ -3640,15 +3734,15 @@ func be16(buf []byte) int {
 	return 256*int(buf[0]) + int(buf[1])
 }
 
-func (f *Fpdf) newImageInfo() *ImageInfoType {
+func newImageInfo() *ImageInfoType {
 	// default dpi to 72 unless told otherwise
-	return &ImageInfoType{scale: f.k, dpi: 72}
+	return &ImageInfoType{dpi: 72}
 }
 
 // parsejpg extracts info from io.Reader with JPEG data
 // Thank you, Bruno Michel, for providing this code.
 func (f *Fpdf) parsejpg(r io.Reader) (info *ImageInfoType) {
-	info = f.newImageInfo()
+	info = newImageInfo()
 	var (
 		data bytes.Buffer
 		err  error
@@ -3690,22 +3784,28 @@ func (f *Fpdf) parsepng(r io.Reader, readdpi bool) (info *ImageInfoType) {
 		f.err = err
 		return
 	}
-	return f.parsepngstream(buf, readdpi)
+  info, err = parsepngstream(buf, readdpi, &f.pdfVersion)
+  f.err = err;
+  return info;
 }
 
-func (f *Fpdf) readBeInt32(r io.Reader) (val int32) {
-	err := binary.Read(r, binary.BigEndian, &val)
-	if err != nil && err != io.EOF {
-		f.err = err
+func readBeInt32(r io.Reader) (val int32) {
+	binary.Read(r, binary.BigEndian, &val)
+    /*
+	if err == io.EOF {
+		err = nil
 	}
+    */
 	return
 }
 
-func (f *Fpdf) readByte(r io.Reader) (val byte) {
-	err := binary.Read(r, binary.BigEndian, &val)
+func readByte(r io.Reader) (val byte) {
+	binary.Read(r, binary.BigEndian, &val)
+    /*
 	if err != nil {
 		f.err = err
 	}
+    */
 	return
 }
 
@@ -3728,7 +3828,9 @@ func (f *Fpdf) parsegif(r io.Reader) (info *ImageInfoType) {
 		f.err = err
 		return
 	}
-	return f.parsepngstream(pngBuf, false)
+  info, err = parsepngstream(pngBuf, false, &f.pdfVersion)
+  f.err = err;
+  return info;
 }
 
 // newobj begins a new object
@@ -4029,7 +4131,7 @@ func (f *Fpdf) putfonts() {
 	}
 	{
 		var keyList []string
-		var font fontDefType
+		var font FontDefType
 		var key string
 		for key = range f.fonts {
 			keyList = append(keyList, key)
@@ -4106,13 +4208,6 @@ func (f *Fpdf) putfonts() {
 				f.out("endobj")
 			case "UTF8":
 				fontName := "utf8" + font.Name
-				usedRunes := font.usedRunes
-				delete(usedRunes, 0)
-				utf8FontStream := font.utf8File.GenerateCutFont(usedRunes)
-				utf8FontSize := len(utf8FontStream)
-				compressedFontStream := sliceCompress(utf8FontStream)
-				CodeSignDictionary := font.utf8File.CodeSymbolDictionary
-				delete(CodeSignDictionary, 0)
 
 				f.newobj()
 				f.out(fmt.Sprintf("<</Type /Font\n/Subtype /Type0\n/BaseFont /%s\n/Encoding /Identity-H\n/DescendantFonts [%d 0 R]\n/ToUnicode %d 0 R>>\n"+"endobj", fontName, f.n+1, f.n+2))
@@ -4123,7 +4218,7 @@ func (f *Fpdf) putfonts() {
 				if font.Desc.MissingWidth != 0 {
 					f.out("/DW " + strconv.Itoa(font.Desc.MissingWidth) + "")
 				}
-				f.generateCIDFontMap(&font, font.utf8File.LastRune)
+				f.out("/W [" + font.cidFontMap + " ]")
 				f.out("/CIDToGIDMap " + strconv.Itoa(f.n+4) + " 0 R>>")
 				f.out("endobj")
 
@@ -4157,27 +4252,18 @@ func (f *Fpdf) putfonts() {
 				f.out(s.String())
 				f.out("endobj")
 
-				// Embed CIDToGIDMap
-				cidToGidMap := make([]byte, 256*256*2)
-
-				for cc, glyph := range CodeSignDictionary {
-					cidToGidMap[cc*2] = byte(glyph >> 8)
-					cidToGidMap[cc*2+1] = byte(glyph & 0xFF)
-				}
-
-				cidToGidMap = sliceCompress(cidToGidMap)
 				f.newobj()
-				f.out("<</Length " + strconv.Itoa(len(cidToGidMap)) + "/Filter /FlateDecode>>")
-				f.putstream(cidToGidMap)
+				f.out("<</Length " + strconv.Itoa(len(font.cidToGidMap)) + "/Filter /FlateDecode>>")
+				f.putstream(font.cidToGidMap)
 				f.out("endobj")
 
 				//Font file
 				f.newobj()
-				f.out("<</Length " + strconv.Itoa(len(compressedFontStream)))
+				f.out("<</Length " + strconv.Itoa(len(font.compressedFontStream)))
 				f.out("/Filter /FlateDecode")
-				f.out("/Length1 " + strconv.Itoa(utf8FontSize))
+				f.out("/Length1 " + strconv.Itoa(len(font.utf8FontStream)))
 				f.out(">>")
-				f.putstream(compressedFontStream)
+				f.putstream(font.compressedFontStream)
 				f.out("endobj")
 			default:
 				f.err = fmt.Errorf("unsupported font type: %s", tp)
@@ -4188,7 +4274,9 @@ func (f *Fpdf) putfonts() {
 	return
 }
 
-func (f *Fpdf) generateCIDFontMap(font *fontDefType, LastRune int) {
+func GenerateCIDFontMap(font *FontDefType) {
+	LastRune := 0x36F
+	font.utf8File.LastRune = LastRune
 	rangeID := 0
 	cidArray := make(map[int]*untypedKeyMap)
 	cidArrayKeys := make([]int, 0)
@@ -4302,7 +4390,8 @@ func (f *Fpdf) generateCIDFontMap(font *fontDefType, LastRune int) {
 			w.printf(" %d [ %s ]\n", k, implode(" ", ws.valueSet))
 		}
 	}
-	f.out("/W [" + w.String() + " ]")
+
+    font.cidFontMap = w.String();
 }
 
 func implode(sep string, arr []int) string {
@@ -4360,6 +4449,9 @@ func (f *Fpdf) putimages() {
 		image := f.images[key]
 
 		// Check if this image has already been inserted using it's SHA-1 hash.
+    if image.i == "" {
+        panic("image has no i")
+    }
 		insertedImageObjN, isFound := insertedImages[image.i]
 
 		// If found, skip inserting the image as a new object, and
@@ -4419,7 +4511,6 @@ func (f *Fpdf) putimage(info *ImageInfoType) {
 			f:     info.f,
 			dp:    sprintf("/Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns %d", int(info.w)),
 			data:  info.smask,
-			scale: f.k,
 		}
 		f.putimage(smask)
 	}
@@ -4427,9 +4518,8 @@ func (f *Fpdf) putimage(info *ImageInfoType) {
 	if info.cs == "Indexed" {
 		f.newobj()
 		if f.compress {
-			pal := sliceCompress(info.pal)
-			f.outf("<</Filter /FlateDecode /Length %d>>", len(pal))
-			f.putstream(pal)
+			f.outf("<</Filter /FlateDecode /Length %d>>", len(info.compressedPal))
+			f.putstream(info.compressedPal)
 		} else {
 			f.outf("<</Length %d>>", len(info.pal))
 			f.putstream(info.pal)
@@ -4481,7 +4571,7 @@ func (f *Fpdf) putresourcedict() {
 	f.out("/Font <<")
 	{
 		var keyList []string
-		var font fontDefType
+		var font FontDefType
 		var key string
 		for key = range f.fonts {
 			keyList = append(keyList, key)
