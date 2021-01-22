@@ -51,28 +51,31 @@ func parsepngstream(buf *bytes.Buffer, readdpi bool, pdfVersion *string) (info *
 		err = fmt.Errorf("incorrect PNG buffer")
 		return
 	}
-	w := readBeInt32(buf)
-	h := readBeInt32(buf)
-	bpc := readByte(buf)
+	w, err := readBeInt32(buf)
+	h, err := readBeInt32(buf)
+	bpc, err := readByte(buf)
 	if bpc > 8 {
 		err = fmt.Errorf("16-bit depth not supported in PNG file")
 	}
-	ct := readByte(buf)
+	ct, err := readByte(buf)
 	var colspace string
 	var colorVal int
 	colspace, colorVal, err = pngColorSpace(ct)
 	if err != nil {
 		return
 	}
-	if readByte(buf) != 0 {
+	b, err := readByte(buf)
+	if b != 0 {
 		err = fmt.Errorf("'unknown compression method in PNG buffer")
 		return
 	}
-	if readByte(buf) != 0 {
+	b, err = readByte(buf)
+	if b != 0 {
 		err = fmt.Errorf("'unknown filter method in PNG buffer")
 		return
 	}
-	if readByte(buf) != 0 {
+	b, err = readByte(buf)
+	if b != 0 {
 		err = fmt.Errorf("interlacing not supported in PNG buffer")
 		return
 	}
@@ -84,7 +87,9 @@ func parsepngstream(buf *bytes.Buffer, readdpi bool, pdfVersion *string) (info *
 	data := make([]byte, 0, 32)
 	loop := true
 	for loop {
-		n := int(readBeInt32(buf))
+		var b int32;
+		b, err = readBeInt32(buf)
+		n := int(b)
 		// dbg("Loop [%d]", n)
 		switch string(buf.Next(4)) {
 		case "PLTE":
@@ -122,8 +127,10 @@ func parsepngstream(buf *bytes.Buffer, readdpi bool, pdfVersion *string) (info *
 			// but we ignore files like this
 			// but if they're the same then we can stamp our info
 			// object with it
-			x := int(readBeInt32(buf))
-			y := int(readBeInt32(buf))
+			b, err = readBeInt32(buf)
+			x := int(b)
+			b, err = readBeInt32(buf)
+			y := int(b)
 			units := buf.Next(1)[0]
 			// fmt.Printf("got a pHYs block, x=%d, y=%d, u=%d, readdpi=%t\n",
 			// x, y, int(units), readdpi)

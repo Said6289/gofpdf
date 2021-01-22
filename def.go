@@ -177,7 +177,6 @@ type ImageInfoType struct {
 	f     string  // Image filter
 	dp    string  // DecodeParms
 	trns  []int   // Transparency mask
-	//scale float64 // Document scale factor
 	dpi   float64 // Dots-per-inch found from image file (png only)
 	i     string  // SHA-1 checksum of the above values.
 }
@@ -538,7 +537,6 @@ type Fpdf struct {
 	fontLoader       FontLoader                 // used to load font files from arbitrary locations
 	coreFonts        map[string]bool            // array of core font names
 	fonts            map[string]FontDefType     // array of used fonts
-	fontFiles        map[string]fontFileType    // array of font files
 	diffs            []string                   // array of encoding differences
 	fontFamily       string                     // current font family
 	fontStyle        string                     // current font style
@@ -549,7 +547,6 @@ type Fpdf struct {
 	fontSize         float64                    // current font size in user unit
 	ws               float64                    // word spacing
 	images           map[string]*ImageInfoType  // array of used images
-	aliasMap         map[string]string          // map of alias->replacement
 	pageLinks        [][]linkType               // pageLinks[page][link], both 1-based
 	links            []intLinkType              // array of internal links
 	attachments      []Attachment               // slice of content to embed globally
@@ -576,7 +573,6 @@ type Fpdf struct {
 	creator          string                     // creator
 	creationDate     time.Time                  // override for document CreationDate value
 	modDate          time.Time                  // override for document ModDate value
-	aliasNbPagesStr  string                     // alias for total number of pages
 	pdfVersion       string                     // PDF version number
 	fontDirStr       string                     // location of font definition files
 	capStyle         int                        // line cap style: butt 0, round 1, square 2
@@ -698,26 +694,26 @@ type FontDescType struct {
 }
 
 type FontDefType struct {
-	Tp             string        // "Core", "TrueType", ...
-	Name           string        // "Courier-Bold", ...
-	Desc           FontDescType  // Font descriptor
-	Up             int           // Underline position
-	Ut             int           // Underline thickness
-	Cw             []int         // Character width by ordinal
-	Enc            string        // "cp1252", ...
-	Diff           string        // Differences from reference encoding
-	File           string        // "Redressed.z"
-	Size1, Size2   int           // Type1 values
-	OriginalSize   int           // Size of uncompressed font file
-	N              int           // Set by font loader
-	DiffN          int           // Position of diff in app array, set by font loader
-	i              string        // 1-based position in font list, set by font loader, not this program
-	utf8File       *utf8FontFile // UTF-8 font
-	usedRunes      map[int]int   // Array of used runes
-	cidFontMap     string        // CID Font Map
-	utf8FontStream []byte
+	Tp                   string        // "Core", "TrueType", ...
+	Name                 string        // "Courier-Bold", ...
+	Desc                 FontDescType  // Font descriptor
+	Up                   int           // Underline position
+	Ut                   int           // Underline thickness
+	Cw                   []int         // Character width by ordinal
+	Enc                  string        // "cp1252", ...
+	Diff                 string        // Differences from reference encoding
+	File                 string        // "Redressed.z"
+	Size1, Size2         int           // Type1 values
+	OriginalSize         int           // Size of uncompressed font file
+	N                    int           // Set by font loader
+	DiffN                int           // Position of diff in app array, set by font loader
+	i                    string        // 1-based position in font list, set by font loader, not this program
+	utf8File             *utf8FontFile // UTF-8 font
+	usedRunes            map[int]int   // Array of used runes
+	cidFontMap           string        // CID Font Map
+	cidToGidMap          []byte
+	utf8FontStream       []byte
 	compressedFontStream []byte
-	cidToGidMap    []byte
 }
 
 // generateFontID generates a font Id from the font definition

@@ -82,7 +82,6 @@ func fpdfNew(orientationStr, unitStr, sizeStr, fontDirStr string, size SizeType)
 	f.defPageBoxes = make(map[string]PageBox)
 	f.state = 0
 	f.fonts = make(map[string]FontDefType)
-	f.fontFiles = make(map[string]fontFileType)
 	f.diffs = make([]string, 0, 8)
 	f.templates = make(map[string]Template)
 	f.templateObjects = make(map[string]int)
@@ -97,7 +96,6 @@ func fpdfNew(orientationStr, unitStr, sizeStr, fontDirStr string, size SizeType)
 	f.links = append(f.links, intLinkType{}) // links[0] is unused (1-based)
 	f.pageAttachments = make([][]annotationAttach, 0, 8)
 	f.pageAttachments = append(f.pageAttachments, []annotationAttach{}) //
-	f.aliasMap = make(map[string]string)
 	f.inHeader = false
 	f.inFooter = false
 	f.lasth = 0
@@ -624,18 +622,6 @@ func (f *Fpdf) SetCreator(creatorStr string, isUTF8 bool) {
 // SetXmpMetadata defines XMP metadata that will be embedded with the document.
 func (f *Fpdf) SetXmpMetadata(xmpStream []byte) {
 	f.xmp = xmpStream
-}
-
-// AliasNbPages defines an alias for the total number of pages. It will be
-// substituted as the document is closed. An empty string is replaced with the
-// string "{nb}".
-//
-// See the example for AddPage() for a demonstration of this method.
-func (f *Fpdf) AliasNbPages(aliasStr string) {
-	if aliasStr == "" {
-		aliasStr = "{nb}"
-	}
-	f.aliasNbPagesStr = aliasStr
 }
 
 // RTL enables right-to-left mode
@@ -1677,72 +1663,12 @@ func (f *Fpdf) addFont(familyStr, styleStr, fileStr string, isUTF8 bool) {
 		}
 	}
 	if isUTF8 {
-		fontKey := getFontKey(familyStr, styleStr)
-		_, ok := f.fonts[fontKey]
-		if ok {
-			return
-		}
-		var ttfStat os.FileInfo
-		var err error
-		fileStr = path.Join(f.fontpath, fileStr)
-		ttfStat, err = os.Stat(fileStr)
-		if err != nil {
-			f.SetError(err)
-			return
-		}
-		originalSize := ttfStat.Size()
-		Type := "UTF8"
-		var utf8Bytes []byte
-		utf8Bytes, err = ioutil.ReadFile(fileStr)
-		if err != nil {
-			f.SetError(err)
-			return
-		}
-		reader := fileReader{readerPosition: 0, array: utf8Bytes}
-		utf8File := newUTF8Font(&reader)
-		err = utf8File.parseFile()
-		if err != nil {
-			f.SetError(err)
-			return
-		}
-
-		desc := FontDescType{
-			Ascent:       int(utf8File.Ascent),
-			Descent:      int(utf8File.Descent),
-			CapHeight:    utf8File.CapHeight,
-			Flags:        utf8File.Flags,
-			FontBBox:     utf8File.Bbox,
-			ItalicAngle:  utf8File.ItalicAngle,
-			StemV:        utf8File.StemV,
-			MissingWidth: round(utf8File.DefaultWidth),
-		}
-
-		var sbarr map[int]int
-		if f.aliasNbPagesStr == "" {
-			sbarr = makeSubsetRange(57)
-		} else {
-			sbarr = makeSubsetRange(32)
-		}
-		def := FontDefType{
-			Tp:        Type,
-			Name:      fontKey,
-			Desc:      desc,
-			Up:        int(round(utf8File.UnderlinePosition)),
-			Ut:        round(utf8File.UnderlineThickness),
-			Cw:        utf8File.CharWidths,
-			usedRunes: sbarr,
-			File:      fileStr,
-			utf8File:  utf8File,
-		}
-		def.i, _ = generateFontID(def)
-		f.fonts[fontKey] = def
-		f.fontFiles[fontKey] = fontFileType{
-			length1:  originalSize,
-			fontType: "UTF8",
-		}
-		f.fontFiles[fileStr] = fontFileType{
-			fontType: "UTF8",
-		}
+        def := FontDefType{};
+        def, f.err = PrepareUTF8Font(fileStr, familyStr, styleStr);
+        if f.err == nil {
+            f.fonts[def.Name] = def;
+            return
+        }
 	} else {
 		if f.fontLoader != nil {
 			reader, err := f.fontLoader.Open(fileStr)
@@ -1818,60 +1744,19 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 		return
 	}
 
-	// load font key
 	var ok bool
 	fontkey := getFontKey(familyStr, styleStr)
 	_, ok = f.fonts[fontkey]
-
 	if ok {
 		return
 	}
 
 	if utf8Bytes != nil {
-
-		// if styleStr == "IB" {
-		// 	styleStr = "BI"
-		// }
-
-		Type := "UTF8"
-		reader := fileReader{readerPosition: 0, array: utf8Bytes}
-
-		utf8File := newUTF8Font(&reader)
-
-		err := utf8File.parseFile()
-		if err != nil {
-			fmt.Printf("get metrics Error: %e\n", err)
-			return
-		}
-		desc := FontDescType{
-			Ascent:       int(utf8File.Ascent),
-			Descent:      int(utf8File.Descent),
-			CapHeight:    utf8File.CapHeight,
-			Flags:        utf8File.Flags,
-			FontBBox:     utf8File.Bbox,
-			ItalicAngle:  utf8File.ItalicAngle,
-			StemV:        utf8File.StemV,
-			MissingWidth: round(utf8File.DefaultWidth),
-		}
-
-		var sbarr map[int]int
-		if f.aliasNbPagesStr == "" {
-			sbarr = makeSubsetRange(57)
-		} else {
-			sbarr = makeSubsetRange(32)
-		}
-		def := FontDefType{
-			Tp:        Type,
-			Name:      fontkey,
-			Desc:      desc,
-			Up:        int(round(utf8File.UnderlinePosition)),
-			Ut:        round(utf8File.UnderlineThickness),
-			Cw:        utf8File.CharWidths,
-			utf8File:  utf8File,
-			usedRunes: sbarr,
-		}
-		def.i, _ = generateFontID(def)
-		f.fonts[fontkey] = def
+        def := FontDefType{};
+        def, f.err = PrepareUTF8FontFromBytes(utf8Bytes, familyStr, styleStr);
+        if f.err == nil {
+            f.fonts[fontkey] = def;
+        }
 	} else {
 		// load font definitions
 		var info FontDefType
@@ -1909,40 +1794,29 @@ func (f *Fpdf) addFontFromBytes(familyStr, styleStr string, jsonFileBytes, zFile
 			info.DiffN = n
 		}
 
-		// embed font
-		if len(info.File) > 0 {
-			if info.Tp == "TrueType" {
-				f.fontFiles[info.File] = fontFileType{
-					length1:  int64(info.OriginalSize),
-					embedded: true,
-					content:  zFileBytes,
-				}
-			} else {
-				f.fontFiles[info.File] = fontFileType{
-					length1:  int64(info.Size1),
-					length2:  int64(info.Size2),
-					embedded: true,
-					content:  zFileBytes,
-				}
-			}
-		}
-
 		f.fonts[fontkey] = info
 	}
 }
 
-func PrepareFontDescType(utf8Bytes []byte, familyStr, styleStr, aliasNbPagesStr string) (FontDefType, error) {
-    Type := "UTF8"
-    reader := fileReader{readerPosition: 0, array: utf8Bytes}
+func PrepareUTF8Font(file, familyStr, styleStr string) (FontDefType, error) {
+    var font FontDefType;
+    b, err := ioutil.ReadFile(file);
+    if err == nil {
+        font, err = PrepareUTF8FontFromBytes(b, familyStr, styleStr);
+    }
+    return font, err;
+}
 
-    utf8File := newUTF8Font(&reader)
+func PrepareUTF8FontFromBytes(utf8Bytes []byte, familyStr, styleStr string) (FontDefType, error) {
     def := FontDefType{}
 
+    reader := fileReader{readerPosition: 0, array: utf8Bytes}
+    utf8File := newUTF8Font(&reader)
     err := utf8File.parseFile()
     if err != nil {
-        fmt.Printf("get metrics Error: %e\n", err)
         return def, err
     }
+
     desc := FontDescType{
         Ascent:       int(utf8File.Ascent),
         Descent:      int(utf8File.Descent),
@@ -1954,56 +1828,167 @@ func PrepareFontDescType(utf8Bytes []byte, familyStr, styleStr, aliasNbPagesStr 
         MissingWidth: round(utf8File.DefaultWidth),
     }
 
-    var sbarr map[int]int
-    if aliasNbPagesStr == "" {
-        sbarr = makeSubsetRange(57)
-    } else {
-        sbarr = makeSubsetRange(32)
-    }
-
     fontkey := getFontKey(familyStr, styleStr);
     def = FontDefType{
-        Tp:        Type,
+        Tp:        "UTF8",
         Name:      fontkey,
         Desc:      desc,
         Up:        int(round(utf8File.UnderlinePosition)),
         Ut:        round(utf8File.UnderlineThickness),
         Cw:        utf8File.CharWidths,
         utf8File:  utf8File,
-        usedRunes: sbarr,
+        usedRunes: makeSubsetRange(57),
     }
-    def.i, _ = generateFontID(def)
+    def.i, err = generateFontID(def)
 
-    if err == nil {
-        GenerateCIDFontMap(&def)
-
-        usedRunes := def.usedRunes
-        for i := 0; i < def.utf8File.LastRune; i += 1 {
-            usedRunes[int(i)] = int(i)
-        }
-        delete(usedRunes, 0)
-        def.utf8FontStream = def.utf8File.GenerateCutFont(usedRunes)
-        def.compressedFontStream = sliceCompress(def.utf8FontStream)
-
-        CodeSignDictionary := def.utf8File.CodeSymbolDictionary
-        delete(CodeSignDictionary, 0)
-
-        cidToGidMap := make([]byte, 256*256*2)
-
-        for cc, glyph := range CodeSignDictionary {
-            cidToGidMap[cc*2] = byte(glyph >> 8)
-            cidToGidMap[cc*2+1] = byte(glyph & 0xFF)
-        }
-
-        def.cidToGidMap = sliceCompress(cidToGidMap)
+    if err != nil {
+        return def, err
     }
+
+    def.utf8File.LastRune = 0xFFF;
+    usedRunes := def.usedRunes
+    for i := 0; i < def.utf8File.LastRune; i += 1 {
+        usedRunes[int(i)] = int(i)
+    }
+    delete(usedRunes, 0)
+
+    generateCIDFontMap(&def);
+    def.utf8FontStream = def.utf8File.GenerateCutFont(usedRunes)
+    def.compressedFontStream = sliceCompress(def.utf8FontStream)
+
+    codeSignDictionary := def.utf8File.CodeSymbolDictionary
+    delete(codeSignDictionary, 0)
+    cidToGidMap := make([]byte, 256*256*2)
+    for cc, glyph := range codeSignDictionary {
+        cidToGidMap[cc*2] = byte(glyph >> 8)
+        cidToGidMap[cc*2+1] = byte(glyph & 0xFF)
+    }
+    def.cidToGidMap = sliceCompress(cidToGidMap)
 
     return def, err;
 }
 
-func (f *Fpdf) RegisterFontDef(def FontDefType, familyStr, styleStr string) {
-    fontkey := getFontKey(familyStr, styleStr)
-    f.fonts[fontkey] = def
+func generateCIDFontMap(font *FontDefType) {
+    LastRune := font.utf8File.LastRune
+    rangeID := 0
+    cidArray := make(map[int]*untypedKeyMap)
+    cidArrayKeys := make([]int, 0)
+    prevCid := -2
+    prevWidth := -1
+    interval := false
+    startCid := 1
+    cwLen := LastRune + 1
+
+    // for each character
+    for cid := startCid; cid < cwLen; cid++ {
+        if font.Cw[cid] == 0x00 {
+            continue
+        }
+        width := font.Cw[cid]
+        if width == 65535 {
+            width = 0
+        }
+        if numb, OK := font.usedRunes[cid]; cid > 255 && (!OK || numb == 0) {
+            continue
+        }
+
+        if cid == prevCid+1 {
+            if width == prevWidth {
+
+                if width == cidArray[rangeID].get(0) {
+                    cidArray[rangeID].put(nil, width)
+                } else {
+                    cidArray[rangeID].pop()
+                    rangeID = prevCid
+                    r := untypedKeyMap{
+                        valueSet: make([]int, 0),
+                        keySet:   make([]interface{}, 0),
+                    }
+                    cidArray[rangeID] = &r
+                    cidArrayKeys = append(cidArrayKeys, rangeID)
+                    cidArray[rangeID].put(nil, prevWidth)
+                    cidArray[rangeID].put(nil, width)
+                }
+                interval = true
+                cidArray[rangeID].put("interval", 1)
+            } else {
+                if interval {
+                    // new range
+                    rangeID = cid
+                    r := untypedKeyMap{
+                        valueSet: make([]int, 0),
+                        keySet:   make([]interface{}, 0),
+                    }
+                    cidArray[rangeID] = &r
+                    cidArrayKeys = append(cidArrayKeys, rangeID)
+                    cidArray[rangeID].put(nil, width)
+                } else {
+                    cidArray[rangeID].put(nil, width)
+                }
+                interval = false
+            }
+        } else {
+            rangeID = cid
+            r := untypedKeyMap{
+                valueSet: make([]int, 0),
+                keySet:   make([]interface{}, 0),
+            }
+            cidArray[rangeID] = &r
+            cidArrayKeys = append(cidArrayKeys, rangeID)
+            cidArray[rangeID].put(nil, width)
+            interval = false
+        }
+        prevCid = cid
+        prevWidth = width
+
+    }
+    previousKey := -1
+    nextKey := -1
+    isInterval := false
+    for g := 0; g < len(cidArrayKeys); {
+        key := cidArrayKeys[g]
+        ws := *cidArray[key]
+        cws := len(ws.keySet)
+        if (key == nextKey) && (!isInterval) && (ws.getIndex("interval") < 0 || cws < 4) {
+            if cidArray[key].getIndex("interval") >= 0 {
+                cidArray[key].delete("interval")
+            }
+            cidArray[previousKey] = arrayMerge(cidArray[previousKey], cidArray[key])
+            cidArrayKeys = remove(cidArrayKeys, key)
+        } else {
+            g++
+            previousKey = key
+        }
+        nextKey = key + cws
+        // ui := ws.getIndex("interval")
+        // ui = ui + 1
+        if ws.getIndex("interval") >= 0 {
+            if cws > 3 {
+                isInterval = true
+            } else {
+                isInterval = false
+            }
+            cidArray[key].delete("interval")
+            nextKey--
+        } else {
+            isInterval = false
+        }
+    }
+    var w fmtBuffer
+    for _, k := range cidArrayKeys {
+        ws := cidArray[k]
+        if len(arrayCountValues(ws.valueSet)) == 1 {
+            w.printf(" %d %d %d", k, k+len(ws.valueSet)-1, ws.get(0))
+        } else {
+            w.printf(" %d [ %s ]\n", k, implode(" ", ws.valueSet))
+        }
+    }
+
+    font.cidFontMap = w.String();
+}
+
+func (f *Fpdf) RegisterFontDef(def FontDefType) {
+    f.fonts[def.Name] = def
 }
 
 // getFontKey is used by AddFontFromReader and GetFontDesc
@@ -2050,15 +2035,6 @@ func (f *Fpdf) AddFontFromReader(familyStr, styleStr string, r io.Reader) {
 			n = len(f.diffs)
 		}
 		info.DiffN = n
-	}
-	// dbg("font [%s], type [%s]", info.File, info.Tp)
-	if len(info.File) > 0 {
-		// Embedded font
-		if info.Tp == "TrueType" {
-			f.fontFiles[info.File] = fontFileType{length1: int64(info.OriginalSize)}
-		} else {
-			f.fontFiles[info.File] = fontFileType{length1: int64(info.Size1), length2: int64(info.Size2)}
-		}
 	}
 	f.fonts[fontkey] = info
 	return
@@ -3276,7 +3252,17 @@ func (f *Fpdf) RegisterImageOptionsReader(imgName string, options ImageOptions, 
 	return
 }
 
-func PreparePNG(buf *bytes.Buffer, scale float64, readDpi bool) (*ImageInfoType, error) {
+func PreparePNG(file string, scale float64, readDpi bool) (*ImageInfoType, error) {
+    var info *ImageInfoType;
+    b, err := ioutil.ReadFile(file);
+    if err == nil {
+        info, err = PreparePNGFromBytes(b, scale, readDpi);
+    }
+    return info, err;
+}
+
+func PreparePNGFromBytes(b []byte, scale float64, readDpi bool) (*ImageInfoType, error) {
+    buf := bytes.NewBuffer(b)
     dummy := ""
     info, err := parsepngstream(buf, readDpi, &dummy)
     if err == nil {
@@ -3789,24 +3775,17 @@ func (f *Fpdf) parsepng(r io.Reader, readdpi bool) (info *ImageInfoType) {
   return info;
 }
 
-func readBeInt32(r io.Reader) (val int32) {
-	binary.Read(r, binary.BigEndian, &val)
-    /*
-	if err == io.EOF {
-		err = nil
-	}
-    */
-	return
+func readBeInt32(r io.Reader) (val int32, err error) {
+    err = binary.Read(r, binary.BigEndian, &val);
+    if err == io.EOF {
+        err = nil;
+    }
+    return;
 }
 
-func readByte(r io.Reader) (val byte) {
-	binary.Read(r, binary.BigEndian, &val)
-    /*
-	if err != nil {
-		f.err = err
-	}
-    */
-	return
+func readByte(r io.Reader) (val byte, err error) {
+    err = binary.Read(r, binary.BigEndian, &val);
+    return;
 }
 
 // parsegif extracts info from a GIF data (via PNG conversion)
@@ -3944,48 +3923,11 @@ func (f *Fpdf) SetJavascript(script string) {
 	f.javascript = &script
 }
 
-// RegisterAlias adds an (alias, replacement) pair to the document so we can
-// replace all occurrences of that alias after writing but before the document
-// is closed. Functions ExampleFpdf_RegisterAlias() and
-// ExampleFpdf_RegisterAlias_utf8() in fpdf_test.go demonstrate this method.
-func (f *Fpdf) RegisterAlias(alias, replacement string) {
-	// Note: map[string]string assignments embed literal escape ("\00") sequences
-	// into utf16 key and value strings. Consequently, subsequent search/replace
-	// operations will fail unexpectedly if utf8toutf16() conversions take place
-	// here. Instead, conversions are deferred until the actual search/replace
-	// operation takes place when the PDF output is generated.
-	f.aliasMap[alias] = replacement
-}
-
-func (f *Fpdf) replaceAliases() {
-	for mode := 0; mode < 2; mode++ {
-		for alias, replacement := range f.aliasMap {
-			if mode == 1 {
-				alias = utf8toutf16(alias, false)
-				replacement = utf8toutf16(replacement, false)
-			}
-			for n := 1; n <= f.page; n++ {
-				s := f.pages[n].String()
-				if strings.Contains(s, alias) {
-					s = strings.Replace(s, alias, replacement, -1)
-					f.pages[n].Truncate(0)
-					f.pages[n].WriteString(s)
-				}
-			}
-		}
-	}
-}
-
 func (f *Fpdf) putpages() {
 	var wPt, hPt float64
 	var pageSize SizeType
 	var ok bool
 	nb := f.page
-	if len(f.aliasNbPagesStr) > 0 {
-		// Replace number of pages
-		f.RegisterAlias(f.aliasNbPagesStr, sprintf("%d", nb))
-	}
-	f.replaceAliases()
 	if f.defOrientation == "P" {
 		wPt = f.defPageSize.Wd * f.k
 		hPt = f.defPageSize.Ht * f.k
@@ -4073,61 +4015,11 @@ func (f *Fpdf) putfonts() {
 	if f.err != nil {
 		return
 	}
-	nf := f.n
 	for _, diff := range f.diffs {
 		// Encodings
 		f.newobj()
 		f.outf("<</Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [%s]>>", diff)
 		f.out("endobj")
-	}
-	{
-		var fileList []string
-		var info fontFileType
-		var file string
-		for file = range f.fontFiles {
-			fileList = append(fileList, file)
-		}
-		if f.catalogSort {
-			sort.SliceStable(fileList, func(i, j int) bool { return fileList[i] < fileList[j] })
-		}
-		for _, file = range fileList {
-			info = f.fontFiles[file]
-			if info.fontType != "UTF8" {
-				f.newobj()
-				info.n = f.n
-				f.fontFiles[file] = info
-
-				var font []byte
-
-				if info.embedded {
-					font = info.content
-				} else {
-					var err error
-					font, err = f.loadFontFile(file)
-					if err != nil {
-						f.err = err
-						return
-					}
-				}
-				compressed := file[len(file)-2:] == ".z"
-				if !compressed && info.length2 > 0 {
-					buf := font[6:info.length1]
-					buf = append(buf, font[6+info.length1+6:info.length2]...)
-					font = buf
-				}
-				f.outf("<</Length %d", len(font))
-				if compressed {
-					f.out("/Filter /FlateDecode")
-				}
-				f.outf("/Length1 %d", info.length1)
-				if info.length2 > 0 {
-					f.outf("/Length2 %d /Length3 0", info.length2)
-				}
-				f.out(">>")
-				f.putstream(font)
-				f.out("endobj")
-			}
-		}
 	}
 	{
 		var keyList []string
@@ -4161,51 +4053,7 @@ func (f *Fpdf) putfonts() {
 			case "Type1":
 				fallthrough
 			case "TrueType":
-				// Additional Type1 or TrueType/OpenType font
-				f.newobj()
-				f.out("<</Type /Font")
-				f.outf("/BaseFont /%s", name)
-				f.outf("/Subtype /%s", tp)
-				f.out("/FirstChar 32 /LastChar 255")
-				f.outf("/Widths %d 0 R", f.n+1)
-				f.outf("/FontDescriptor %d 0 R", f.n+2)
-				if font.DiffN > 0 {
-					f.outf("/Encoding %d 0 R", nf+font.DiffN)
-				} else {
-					f.out("/Encoding /WinAnsiEncoding")
-				}
-				f.out(">>")
-				f.out("endobj")
-				// Widths
-				f.newobj()
-				var s fmtBuffer
-				s.WriteString("[")
-				for j := 32; j < 256; j++ {
-					s.printf("%d ", font.Cw[j])
-				}
-				s.WriteString("]")
-				f.out(s.String())
-				f.out("endobj")
-				// Descriptor
-				f.newobj()
-				s.Truncate(0)
-				s.printf("<</Type /FontDescriptor /FontName /%s ", name)
-				s.printf("/Ascent %d ", font.Desc.Ascent)
-				s.printf("/Descent %d ", font.Desc.Descent)
-				s.printf("/CapHeight %d ", font.Desc.CapHeight)
-				s.printf("/Flags %d ", font.Desc.Flags)
-				s.printf("/FontBBox [%d %d %d %d] ", font.Desc.FontBBox.Xmin, font.Desc.FontBBox.Ymin,
-					font.Desc.FontBBox.Xmax, font.Desc.FontBBox.Ymax)
-				s.printf("/ItalicAngle %d ", font.Desc.ItalicAngle)
-				s.printf("/StemV %d ", font.Desc.StemV)
-				s.printf("/MissingWidth %d ", font.Desc.MissingWidth)
-				var suffix string
-				if tp != "Type1" {
-					suffix = "2"
-				}
-				s.printf("/FontFile%s %d 0 R>>", suffix, f.fontFiles[font.File].n)
-				f.out(s.String())
-				f.out("endobj")
+                panic("Type1 and TrueType fonts not implemented")
 			case "UTF8":
 				fontName := "utf8" + font.Name
 
@@ -4272,126 +4120,6 @@ func (f *Fpdf) putfonts() {
 		}
 	}
 	return
-}
-
-func GenerateCIDFontMap(font *FontDefType) {
-	LastRune := 0x36F
-	font.utf8File.LastRune = LastRune
-	rangeID := 0
-	cidArray := make(map[int]*untypedKeyMap)
-	cidArrayKeys := make([]int, 0)
-	prevCid := -2
-	prevWidth := -1
-	interval := false
-	startCid := 1
-	cwLen := LastRune + 1
-
-	// for each character
-	for cid := startCid; cid < cwLen; cid++ {
-		if font.Cw[cid] == 0x00 {
-			continue
-		}
-		width := font.Cw[cid]
-		if width == 65535 {
-			width = 0
-		}
-		if numb, OK := font.usedRunes[cid]; cid > 255 && (!OK || numb == 0) {
-			continue
-		}
-
-		if cid == prevCid+1 {
-			if width == prevWidth {
-
-				if width == cidArray[rangeID].get(0) {
-					cidArray[rangeID].put(nil, width)
-				} else {
-					cidArray[rangeID].pop()
-					rangeID = prevCid
-					r := untypedKeyMap{
-						valueSet: make([]int, 0),
-						keySet:   make([]interface{}, 0),
-					}
-					cidArray[rangeID] = &r
-					cidArrayKeys = append(cidArrayKeys, rangeID)
-					cidArray[rangeID].put(nil, prevWidth)
-					cidArray[rangeID].put(nil, width)
-				}
-				interval = true
-				cidArray[rangeID].put("interval", 1)
-			} else {
-				if interval {
-					// new range
-					rangeID = cid
-					r := untypedKeyMap{
-						valueSet: make([]int, 0),
-						keySet:   make([]interface{}, 0),
-					}
-					cidArray[rangeID] = &r
-					cidArrayKeys = append(cidArrayKeys, rangeID)
-					cidArray[rangeID].put(nil, width)
-				} else {
-					cidArray[rangeID].put(nil, width)
-				}
-				interval = false
-			}
-		} else {
-			rangeID = cid
-			r := untypedKeyMap{
-				valueSet: make([]int, 0),
-				keySet:   make([]interface{}, 0),
-			}
-			cidArray[rangeID] = &r
-			cidArrayKeys = append(cidArrayKeys, rangeID)
-			cidArray[rangeID].put(nil, width)
-			interval = false
-		}
-		prevCid = cid
-		prevWidth = width
-
-	}
-	previousKey := -1
-	nextKey := -1
-	isInterval := false
-	for g := 0; g < len(cidArrayKeys); {
-		key := cidArrayKeys[g]
-		ws := *cidArray[key]
-		cws := len(ws.keySet)
-		if (key == nextKey) && (!isInterval) && (ws.getIndex("interval") < 0 || cws < 4) {
-			if cidArray[key].getIndex("interval") >= 0 {
-				cidArray[key].delete("interval")
-			}
-			cidArray[previousKey] = arrayMerge(cidArray[previousKey], cidArray[key])
-			cidArrayKeys = remove(cidArrayKeys, key)
-		} else {
-			g++
-			previousKey = key
-		}
-		nextKey = key + cws
-		// ui := ws.getIndex("interval")
-		// ui = ui + 1
-		if ws.getIndex("interval") >= 0 {
-			if cws > 3 {
-				isInterval = true
-			} else {
-				isInterval = false
-			}
-			cidArray[key].delete("interval")
-			nextKey--
-		} else {
-			isInterval = false
-		}
-	}
-	var w fmtBuffer
-	for _, k := range cidArrayKeys {
-		ws := cidArray[k]
-		if len(arrayCountValues(ws.valueSet)) == 1 {
-			w.printf(" %d %d %d", k, k+len(ws.valueSet)-1, ws.get(0))
-		} else {
-			w.printf(" %d [ %s ]\n", k, implode(" ", ws.valueSet))
-		}
-	}
-
-    font.cidFontMap = w.String();
 }
 
 func implode(sep string, arr []int) string {
