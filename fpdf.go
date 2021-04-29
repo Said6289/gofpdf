@@ -1845,7 +1845,9 @@ func PrepareUTF8FontFromBytes(utf8Bytes []byte, familyStr, styleStr string) (Fon
         return def, err
     }
 
-    def.utf8File.LastRune = 0xFFF;
+    // TODO(said): This isn't actually a unicode codepoint,
+    // but rather the largest _encoded_ codepoint.. I think.
+    def.utf8File.LastRune = 0x20AC + 1;
     usedRunes := def.usedRunes
     for i := 0; i < def.utf8File.LastRune; i += 1 {
         usedRunes[int(i)] = int(i)
