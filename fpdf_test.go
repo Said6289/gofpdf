@@ -32,9 +32,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jung-kurt/gofpdf"
-	"github.com/jung-kurt/gofpdf/internal/example"
-	"github.com/jung-kurt/gofpdf/internal/files"
+	"github.com/Said6289/gofpdf"
+	"github.com/Said6289/gofpdf/internal/example"
+	"github.com/Said6289/gofpdf/internal/files"
 )
 
 func init() {
